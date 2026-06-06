@@ -1,46 +1,64 @@
-from dhanhq import DhanContext, dhanhq
+import os
 import pandas as pd
+from datetime import datetime
+from dhanhq import DhanContext, dhanhq
+from dotenv import load_dotenv
 
-# Apne details yahan dalo
-CLIENT_ID = "1104646279".strip()
-ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzgwNjc4NTY4LCJpYXQiOjE3ODA1OTIxNjgsInRva2VuQ29uc3VtZXJUeXBlIjoiU0VMRiIsIndlYmhvb2tVcmwiOiIiLCJkaGFuQ2xpZW50SWQiOiIxMTAzODE2NjQ1In0.ogdFd5GtBSHAZpr5ONb8FxTpov2YIoFRW_H-hsFepPE1qpbk8464ufpKAL1wI5hmogTgfV7HYXZwm0kWQLIV4w".strip() 
+# ==========================================
+# 1. CREDENTIALS & SETUP (Via .env)
+# ==========================================
+load_dotenv()
 
-print("[+] Connecting to Dhan API...")
+CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
+ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
+
+if not CLIENT_ID or not ACCESS_TOKEN:
+    print("[X] ERROR: Credentials not found! Please check your .env file.")
+    exit()
+
+print("[+] Connecting to Dhan API for Historical Data...")
 
 try:
     dhan_context = DhanContext(CLIENT_ID, ACCESS_TOKEN)
     dhan = dhanhq(dhan_context)
     
-    print("[+] Fetching Intraday 1-Minute Data for HDFC Bank...")
+    # Dynamic Date: Hamesha aaj ki date automatically nikalega
+    today_date = datetime.now().strftime('%Y-%m-%d')
     
-    # Updated: from_date aur to_date add kar diya
+    print(f"[+] Fetching Intraday 1-Minute Data for HDFC Bank for {today_date}...")
+    
+    # Fetch data using Dhan's internal constants for stability
     historical_data = dhan.intraday_minute_data(
         security_id='1333',
-        exchange_segment='NSE_EQ',
-        instrument_type='EQUITY',
-        from_date='2026-06-04',
-        to_date='2026-06-04'
+        exchange_segment=dhan.NSE,    
+        instrument_type=dhan.EQUITY,  
+        from_date=today_date,         # Auto-updates to current day
+        to_date=today_date            # Auto-updates to current day
     )
     
     if historical_data.get('status') == 'success':
         data = historical_data.get('data', {})
         
-        # DataFrame mein convert kar rahe hain ML input ke liye
-        df = pd.DataFrame({
-            'Timestamp': pd.to_datetime(data.get('start_Time')),
-            'Open': data.get('open'),
-            'High': data.get('high'),
-            'Low': data.get('low'),
-            'Close': data.get('close'),
-            'Volume': data.get('volume')
-        })
-        
-        df.set_index('Timestamp', inplace=True)
-        
-        print("[✔] Data successfully converted to Pandas DataFrame!\n")
-        print(df.head()) # Shuru ki 5 rows print karega
-        print("\n[✔] Data is ready for ML Model ingestion!")
-        
+        # Check if we actually got data (e.g., market might be closed on weekends)
+        if not data or not data.get('start_Time'):
+            print(f"[-] No data found for {today_date}. (Market closed ya phir API error)")
+        else:
+            # Converting to Pandas DataFrame for ML pipeline
+            df = pd.DataFrame({
+                'Timestamp': pd.to_datetime(data.get('start_Time')),
+                'Open': data.get('open'),
+                'High': data.get('high'),
+                'Low': data.get('low'),
+                'Close': data.get('close'),
+                'Volume': data.get('volume')
+            })
+            
+            df.set_index('Timestamp', inplace=True)
+            
+            print("[✔] Data successfully converted to Pandas DataFrame!\n")
+            print(df.tail()) # Head ki jagah Tail() print kiya taaki sabse latest candles dikhein
+            print("\n[✔] Data is ready for ML Model ingestion!")
+            
     else:
         print("[-] Failed to fetch data.")
         print("Error Payload:", historical_data)

@@ -1,27 +1,37 @@
+import os
 from dhanhq import DhanContext, dhanhq
+from dotenv import load_dotenv
 
-# Apna actual Client ID yahan dalo
-CLIENT_ID = "1104646279".strip() 
+# ==========================================
+# 1. CREDENTIALS (Via Secure .env)
+# ==========================================
+load_dotenv()
 
-# Apna lamba token bina kisi dar ke yahan paste karo
-ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzgwNjc4NTY4LCJpYXQiOjE3ODA1OTIxNjgsInRva2VuQ29uc3VtZXJUeXBlIjoiU0VMRiIsIndlYmhvb2tVcmwiOiIiLCJkaGFuQ2xpZW50SWQiOiIxMTAzODE2NjQ1In0.ogdFd5GtBSHAZpr5ONb8FxTpov2YIoFRW_H-hsFepPE1qpbk8464ufpKAL1wI5hmogTgfV7HYXZwm0kWQLIV4w" 
+CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
+ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
 
-# Safety check: Remove any accidental spaces
-ACCESS_TOKEN = ACCESS_TOKEN.strip()
+if not CLIENT_ID or not ACCESS_TOKEN:
+    print("[X] ERROR: Credentials not found! Please check your .env file.")
+    exit()
 
-print("[+] Initializing Dhan API Connection (v2.2+)...")
+print("[+] Initializing Dhan API Connection Tester...")
 
 try:
+    # Set up connection
     dhan_context = DhanContext(CLIENT_ID, ACCESS_TOKEN)
     dhan = dhanhq(dhan_context)
     
+    # Ping the server for Fund Limits
     funds = dhan.get_fund_limits()
+    
     if funds.get('status') == 'success':
-        available_margin = funds.get('data', {}).get('availabelBalance', 0)
-        print(f"[✔] Successfully Connected!")
+        # Dhan's API spelling is sometimes literally 'availabelBalance'
+        available_margin = funds.get('data', {}).get('availabelBalance', 0) 
+        
+        print(f"[✔] BOOM! Successfully Connected to Dhan Server!")
         print(f"[▶] Current Available Margin: ₹{available_margin}")
     else:
-        print("[-] Authentication failed. Please check your Client ID or Token.")
+        print("[-] Authentication failed. Token might be expired.")
         print("Error Payload:", funds)
 
 except Exception as e:

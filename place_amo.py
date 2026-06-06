@@ -1,9 +1,20 @@
+import os
 import requests
 import json
+from dotenv import load_dotenv
 
-# Apna Token yahan daalna mat bhoolna (Dhyan se poora token copy karna)
-CLIENT_ID = "1104646279".strip()
-ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzgwNjc4NTY4LCJpYXQiOjE3ODA1OTIxNjgsInRva2VuQ29uc3VtZXJUeXBlIjoiU0VMRiIsIndlYmhvb2tVcmwiOiIiLCJkaGFuQ2xpZW50SWQiOiIxMTAzODE2NjQ1In0.ogdFd5GtBSHAZpr5ONb8FxTpov2YIoFRW_H-hsFepPE1qpbk8464ufpKAL1wI5hmogTgfV7HYXZwm0kWQLIV4w".strip() 
+# ==========================================
+# 1. CREDENTIALS & SETUP (Via .env)
+# ==========================================
+# Load environment variables from .env file
+load_dotenv()
+
+CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
+ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
+
+if not CLIENT_ID or not ACCESS_TOKEN:
+    print("[X] ERROR: Credentials not found! Please check your .env file.")
+    exit()
 
 print("[+] Bypassing buggy DhanHQ Library...")
 print("[+] Initializing Raw API Connection (AMO MODE)...")

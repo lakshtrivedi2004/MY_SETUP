@@ -1,15 +1,23 @@
+import os
 import time
 import requests
 import json
 import yfinance as yf
 import pandas as pd
+from dotenv import load_dotenv
 
 # ==========================================
-# 1. CREDENTIALS & SETUP
+# 1. CREDENTIALS & SETUP (Via .env)
 # ==========================================
-CLIENT_ID = "1104646279".strip()
-ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzgwNjc4NTY4LCJpYXQiOjE3ODA1OTIxNjgsInRva2VuQ29uc3VtZXJUeXBlIjoiU0VMRiIsIndlYmhvb2tVcmwiOiIiLCJkaGFuQ2xpZW50SWQiOiIxMTAzODE2NjQ1In0.ogdFd5GtBSHAZpr5ONb8FxTpov2YIoFRW_H-hsFepPE1qpbk8464ufpKAL1wI5hmogTgfV7HYXZwm0kWQLIV4w".strip() 
+load_dotenv()
+
+CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
+ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
 URL = "https://api.dhan.co/orders"
+
+if not CLIENT_ID or not ACCESS_TOKEN:
+    print("[X] ERROR: Credentials not found! Please check your .env file.")
+    exit()
 
 HEADERS = {
     'access-token': ACCESS_TOKEN,
@@ -18,58 +26,71 @@ HEADERS = {
     'Accept': 'application/json'
 }
 
-# State Management
+# State Management for Risk Engine
 position_open = False
-print("[+] Alpha Bot Initialized. Connecting to Data Stream...")
+buy_price = 0.0
+stoploss_price = 0.0
+risk_amount = 5.0  # ₹5 ka risk per share for HDFC Bank
+
+# Overtrading Safety Switch
+MAX_TRADES_PER_DAY = 3
+trades_taken_today = 0
+
+print("[+] Alpha Bot v2.1 (LIVE SECURE MODE) Initialized.")
+print("[+] Risk Engine: 1:2 Target with 1:1 Breakeven Trailing SL")
+print(f"[+] Safety Switch: Max Daily Trades Limit = {MAX_TRADES_PER_DAY}")
+print("[+] Connecting to Live Data Stream...")
 
 # ==========================================
-# 2. INGESTION & INFERENCE (THE BRAIN)
+# 2. INGESTION & INFERENCE (TRUE CROSSOVER)
 # ==========================================
-def check_signal():
+def get_latest_market_data():
     try:
-        # Fetch latest 1-minute candle for HDFC Bank
-        ticker = yf.Ticker("HDFCBANK.NS")
-        df = ticker.history(period="1d", interval="1m")
-        
+        df = yf.Ticker("HDFCBANK.NS").history(period="1d", interval="1m")
         if df.empty:
-            return "WAIT"
-            
-        # Calculate 9-EMA
-        df['9_EMA'] = df['Close'].ewm(span=9, adjust=False).mean()
-        
-        # Get the last fully closed candle (second to last row)
-        last_candle = df.iloc[-2] 
-        
-        # Strategy Logic: If Close crosses ABOVE 9-EMA, Buy!
-        if last_candle['Close'] > last_candle['9_EMA']:
-            return "BUY"
-        return "HOLD"
-        
+            return None
+        return df
     except Exception as e:
         print(f"[-] Data Fetch Error: {e}")
-        return "ERROR"
+        return None
+
+def check_buy_signal(df):
+    try:
+        df['9_EMA'] = df['Close'].ewm(span=9, adjust=False).mean()
+        
+        # Tracking 3 points for True Crossover
+        prev_candle = df.iloc[-3]            
+        last_candle = df.iloc[-2]            
+        current_price = df.iloc[-1]['Close'] 
+        
+        # TRUE CROSSOVER LOGIC:
+        if (prev_candle['Close'] <= prev_candle['9_EMA']) and (last_candle['Close'] > last_candle['9_EMA']):
+            return True, current_price
+            
+        return False, current_price
+    except Exception as e:
+        return False, 0.0
 
 # ==========================================
-# 3. EXECUTION ENGINE
+# 3. LIVE EXECUTION ENGINE
 # ==========================================
-def execute_trade():
-    print("[!] BUY SIGNAL DETECTED. Executing Live Market Order...")
+def execute_trade(transaction_type, price_note="MARKET"):
+    print(f"[!] Sending Live {transaction_type} Order to Dhan at {price_note}...")
     
-    # Raw JSON Payload for a Live Intraday Market Order
     payload = {
         "dhanClientId": CLIENT_ID,
-        "correlationId": "AlphaBot_Live_01", 
-        "transactionType": "BUY",
+        "correlationId": f"AlphaBot_Live_{transaction_type}", 
+        "transactionType": transaction_type, 
         "exchangeSegment": "NSE_EQ",
         "productType": "INTRADAY",
-        "orderType": "MARKET",        # Market order for instant execution
+        "orderType": "MARKET",
         "validity": "DAY",
-        "securityId": "1333",         # HDFC Bank
+        "securityId": "1333",         # HDFC Bank Security ID
         "quantity": 1,
         "disclosedQuantity": 0,
-        "price": 0.0,                 # Market orders don't need a price
+        "price": 0.0,
         "triggerPrice": 0.0,
-        "afterMarketOrder": False,    # This is a LIVE order, not AMO
+        "afterMarketOrder": False,
         "amoTime": "OPEN",
         "boProfitValue": 0.0,
         "boStopLossValue": 0.0,
@@ -84,41 +105,84 @@ def execute_trade():
             data = response.json()
             if data.get('status') == 'success':
                 order_id = data.get('data', {}).get('orderId', 'UNKNOWN')
-                print(f"[✔] BOOM! Live Trade Executed. Order ID: {order_id}")
+                print(f"[✔] BOOM! Live {transaction_type} Order Executed. ID: {order_id}")
                 return True
             else:
-                print("[-] Execution Failed. Reason:", data)
+                print(f"[-] {transaction_type} Failed. Reason:", data)
                 return False
         else:
             print(f"[-] HTTP Error {response.status_code}: {response.text}")
             return False
-            
     except Exception as e:
         print(f"[X] Request Error: {e}")
         return False
 
 # ==========================================
-# 4. THE MASTER LOOP
+# 4. THE MASTER LOOP & RISK MANAGER
 # ==========================================
 while True:
     try:
+        # Check if max trades limit is reached
+        if trades_taken_today >= MAX_TRADES_PER_DAY:
+            print(f"\n[!] STOP: Max daily trades limit ({MAX_TRADES_PER_DAY}) reached. Stopping Bot for today.")
+            break
+
         current_time = time.strftime('%H:%M:%S')
-        signal = check_signal()
-        print(f"[{current_time}] Market Scan -> Signal: {signal} | Position Open: {position_open}")
+        df = get_latest_market_data()
         
-        # Fire condition
-        if signal == "BUY" and not position_open:
-            success = execute_trade()
-            if success:
-                position_open = True # Block duplicate trades
-                print("[+] Bot entering monitoring mode for open position...")
+        if df is None:
+            time.sleep(10)
+            continue
+            
+        current_price = df.iloc[-1]['Close']
+        
+        # --- LOOKING FOR A TRADE ---
+        if not position_open:
+            signal, price = check_buy_signal(df)
+            print(f"[{current_time}] Scan HDFC -> Price: ₹{current_price:.2f} | Signal: {'BUY' if signal else 'HOLD'} | Trades Today: {trades_taken_today}/{MAX_TRADES_PER_DAY}")
+            
+            if signal:
+                print(f"\n[+] True Crossover Detected! Executing entry...")
+                if execute_trade("BUY"):
+                    position_open = True
+                    trades_taken_today += 1  # Increment trade counter
+                    buy_price = current_price
+                    stoploss_price = buy_price - risk_amount
+                    print(f"[!] LIVE TRADE ACTIVE! Entry: ₹{buy_price:.2f} | Initial SL: ₹{stoploss_price:.2f} (Trade #{trades_taken_today})")
+        
+        # --- MANAGING ACTIVE TRADE ---
+        else:
+            target_1_1 = buy_price + risk_amount
+            target_1_2 = buy_price + (risk_amount * 2)
+            
+            print(f"[{current_time}] Managing Trade -> Current: ₹{current_price:.2f} | SL: ₹{stoploss_price:.2f} | TGT: ₹{target_1_2:.2f}")
+
+            # 1:1 Trailing to Breakeven
+            if current_price >= target_1_1 and stoploss_price < buy_price:
+                stoploss_price = buy_price
+                print(f"[!!!] 1:1 Hit! Stoploss safely trailed to Breakeven: ₹{stoploss_price:.2f}")
+
+            # 1:2 Target Hit
+            elif current_price >= target_1_2:
+                print(f"\n[$$$] 1:2 Target Hit (₹{current_price:.2f})! Booking Profit...")
+                if execute_trade("SELL", "TAKE PROFIT"):
+                    position_open = False
+                    
+            # Stoploss Hit
+            elif current_price <= stoploss_price:
+                if stoploss_price == buy_price:
+                    print(f"\n[-] Stopped out at Breakeven (₹{current_price:.2f}). No loss taken.")
+                else:
+                    print(f"\n[-] Stoploss Hit (₹{current_price:.2f}). Cutting losses.")
                 
-        # Wait 60 seconds before checking the next candle
-        time.sleep(60) 
+                if execute_trade("SELL", "STOPLOSS"):
+                    position_open = False
+                    
+        time.sleep(30) 
         
     except KeyboardInterrupt:
-        print("\n[+] Alpha Bot shutting down gracefully. Good night!")
+        print("\n[+] Alpha Bot shutting down gracefully. Good luck!")
         break
     except Exception as e:
         print(f"[-] Loop Error: {e}")
-        time.sleep(60)
+        time.sleep(30)
